@@ -12,7 +12,7 @@ Works with any Claude surface that supports the skill format — **Claude Code**
   </a>
 </p>
 
-> **Note:** the linked tutorial covers the original (v1) version of this skill. The pipeline has since been re-engineered around [bradautomates/claude-video](https://github.com/bradautomates/claude-video) — see "What's new in v2" below.
+> **Note:** the tutorial above covers v1. v2 uses a new engine from [bradautomates/claude-video](https://github.com/bradautomates/claude-video). See "What's new in v2" below for the changes.
 
 ## What it does
 
@@ -90,69 +90,69 @@ For Claude Desktop or Claude Agent SDK apps, clone into whatever folder that env
 
 ### Dependencies
 
-- **ffmpeg + ffprobe** — [download](https://ffmpeg.org/download.html), or `brew install ffmpeg` (macOS) / `winget install Gyan.FFmpeg` (Windows) / `apt install ffmpeg` (Linux)
-- **yt-dlp** — `winget install yt-dlp.yt-dlp` (Windows), `brew install yt-dlp` (macOS), or `pipx install yt-dlp` (Linux). Must be on `PATH` as a standalone binary.
-- **Python 3.9+** on `PATH` as `python` (or `python3` on macOS/Linux). The scripts use `from __future__ import annotations`, so 3.9 is enough.
-- **Optional: Whisper API key.** For videos without native captions. Get one at:
-  - **Groq** (recommended — cheaper, faster, runs `whisper-large-v3`): [console.groq.com/keys](https://console.groq.com/keys)
-  - **OpenAI** (fallback): [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+- **ffmpeg + ffprobe.** [Download](https://ffmpeg.org/download.html), or use `brew install ffmpeg` on macOS, `winget install Gyan.FFmpeg` on Windows, or `apt install ffmpeg` on Linux.
+- **yt-dlp.** Use `winget install yt-dlp.yt-dlp` on Windows, `brew install yt-dlp` on macOS, or `pipx install yt-dlp` on Linux. It must be on `PATH` as a standalone binary.
+- **Python 3.9 or later.** Available on `PATH` as `python` (or `python3` on macOS and Linux). The scripts use `from __future__ import annotations`, so 3.9 works.
+- **Optional: Whisper API key.** Only needed for videos with no captions. Get a key at one of these:
+  - [Groq](https://console.groq.com/keys). Recommended. It is cheaper and faster than OpenAI. It runs `whisper-large-v3`.
+  - [OpenAI](https://platform.openai.com/api-keys). The fallback.
 
-Run the included setup wizard to scaffold the `.env` and check dependencies:
+Run the setup wizard to create the `.env` file and check dependencies:
 
 ```bash
 python scripts/setup.py
 ```
 
-It creates `~/.config/watch/.env` with placeholder lines for both keys. Edit the file and paste in whichever key you want to use. Without a key, the skill still works on any video that has captions (i.e. most of YouTube).
+It creates `~/.config/watch/.env` with placeholder lines for both keys. Edit the file and paste in your key. Without a key, the skill still works on any video that has captions, which covers most of YouTube.
 
 ## Usage
 
-Once installed, invoke the skill with the slash command:
+After install, invoke the skill with the slash command:
 
 ```
 /watch-video https://www.youtube.com/watch?v=...
 /watch-video /path/to/local/video.mp4
-/watch-video https://youtu.be/abc123 — focus on the 2:00 to 3:00 mark
+/watch-video https://youtu.be/abc123 focus on 2:00 to 3:00
 ```
 
-The skill is configured slash-only by default to prevent accidental invocation. To switch to auto-trigger (Claude fires the skill on any "watch this video" / URL request), edit the `description:` line at the top of [SKILL.md](SKILL.md) — there's an inline note explaining how.
+The skill is set to slash-only by default. This stops it from firing by accident. If you want auto trigger instead (Claude fires the skill on any "watch this video" or video URL request), edit the `description:` line at the top of [SKILL.md](SKILL.md). There is an inline note in that file that explains how.
 
 ## Direct CLI usage
 
-The pipeline can run standalone:
+The pipeline can run on its own:
 
 ```bash
 python scripts/watch.py "<url-or-path>" [flags]
 ```
 
 Flags:
-- `--start T` / `--end T` — focus on a section (`SS`, `MM:SS`, or `HH:MM:SS`)
-- `--max-frames N` — cap on frame count (default 80, hard max 100)
-- `--resolution W` — frame width in px (default 512)
-- `--fps F` — override auto-fps (clamped to 2 fps max)
-- `--whisper groq|openai` — force a specific Whisper backend
-- `--no-whisper` — disable Whisper fallback (frames-only if no captions)
-- `--out-dir DIR` — keep working files somewhere specific (default: tmp)
+- `--start T` and `--end T`. Focus on a section. Use `SS`, `MM:SS`, or `HH:MM:SS`.
+- `--max-frames N`. Cap on frame count. Default 80, hard max 100.
+- `--resolution W`. Frame width in pixels. Default 512.
+- `--fps F`. Override auto-fps. Capped at 2 fps.
+- `--whisper groq|openai`. Force a specific Whisper backend.
+- `--no-whisper`. Disable the Whisper fallback. Returns frames only if there are no captions.
+- `--out-dir DIR`. Keep working files in a specific folder. Default is a temp folder.
 
-The script prints a markdown report to stdout listing every extracted frame path, the timestamped transcript, and the working directory.
+The script prints a markdown report to stdout. The report lists every frame path, the transcript with timestamps, and the working folder.
 
 ## Troubleshooting
 
-**Whisper request returns 403:** `whisper.py` sets a custom User-Agent already to clear Cloudflare's default-Python-UA block. If you still see 403s, your key is likely invalid — check it at the provider's console.
+**Whisper request returns 403.** `whisper.py` already sets a custom User-Agent to get past Cloudflare's block on the default Python UA. If you still see 403s, your key is probably invalid. Check it at the provider's console.
 
-**`python` command not found on Windows:** the Microsoft Store stub `python3` doesn't run scripts. Install Python 3.9+ from [python.org](https://www.python.org/downloads/) and use `python` (or `py -3.9`).
+**`python` command not found on Windows.** The Microsoft Store stub `python3` does not run scripts. Install Python 3.9 or later from [python.org](https://www.python.org/downloads/) and use `python` (or `py -3.9`).
 
-**yt-dlp fails on YouTube Shorts / age-gated content:** the bundled `download.py` lets yt-dlp pick its own player client. Members-only and region-locked content may still fail — yt-dlp will surface a clear error.
+**yt-dlp fails on YouTube Shorts or age-gated content.** The bundled `download.py` lets yt-dlp pick its own player client. Members-only and region-locked content may still fail. yt-dlp will print a clear error when it does.
 
-**No transcript and no Whisper key:** the report will say `Transcript: none available`. Either install a Whisper key (instructions above) or use `--no-whisper` for frames-only output.
+**No transcript and no Whisper key.** The report will say `Transcript: none available`. Either add a Whisper key (see install above) or use `--no-whisper` for frames only.
 
-**Long videos (>10 min) come back sparse:** that's intentional — frame budget caps at 100. For dense coverage of one section, pass `--start`/`--end` to use focused mode.
+**Long videos (over 10 minutes) come back sparse.** That is on purpose. The frame budget caps at 100. For dense coverage of one section, pass `--start` and `--end` to use focused mode.
 
 ## Credits
 
-- Pipeline engine — [bradautomates/claude-video](https://github.com/bradautomates/claude-video) (MIT). Brad wrote the auto-scaled frame extractor, the Whisper API client, and the setup wizard. Vendored under `scripts/`. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the upstream license.
-- Wrapper skill (slash-only guard, structured notes template, install + usage docs, original v1 local-Whisper pipeline) — [Newuxtreme](https://github.com/Newuxtreme).
+- Pipeline engine: [bradautomates/claude-video](https://github.com/bradautomates/claude-video) (MIT). Brad wrote the auto-scaled frame extractor, the Whisper API client, and the setup wizard. The scripts are vendored under `scripts/`. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the upstream license.
+- Wrapper skill: [Newuxtreme](https://github.com/Newuxtreme). Includes the slash-only guard, the structured notes template, install and usage docs, and the original v1 local-Whisper pipeline.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Bundled scripts under `scripts/` retain their original MIT license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+MIT. See [LICENSE](LICENSE). Bundled scripts under `scripts/` keep their original MIT license. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
