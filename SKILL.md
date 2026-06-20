@@ -25,7 +25,11 @@ Do NOT invoke on:
 - **ffmpeg + ffprobe** on PATH — for frame and audio extraction
 - **yt-dlp** on PATH — for downloading and caption fetching
 - **Python 3.9+** — the bundled scripts use `from __future__ import annotations` so 3.9 works
-- **Optional:** Whisper API key for videos without native captions. Set `GROQ_API_KEY` (preferred — cheaper/faster, runs `whisper-large-v3`) or `OPENAI_API_KEY` in `~/.config/watch/.env`. Without one, captioned videos work fine; uncaptioned videos return frames-only.
+- **Transcription for videos without native captions** — two options, in preference order:
+  - **Local (recommended): `faster-whisper`** (`pip install faster-whisper`). Runs fully on-device — private (clips never leave the machine), free, no API key, no rate limits. Auto-detects language (Hebrew + English). Tries GPU (float16) then falls back to CPU (int8). Model defaults to `medium`; override with `WATCH_WHISPER_MODEL=large-v3`. First run downloads the model once to the HuggingFace cache.
+  - **Cloud (fallback):** set `GROQ_API_KEY` (cheaper/faster, runs `whisper-large-v3`) or `OPENAI_API_KEY` in `~/.config/watch/.env`. Note: this uploads the video's audio to the provider.
+  - With neither, captioned videos still work; uncaptioned videos return frames-only.
+  - Force a backend with `--whisper local|groq|openai`.
 
 Run `python scripts/setup.py --check` to verify dependencies, or `python scripts/setup.py` to scaffold the `.env` and check binaries. On macOS, the installer auto-installs missing binaries via Homebrew. On Linux/Windows, it prints exact install commands.
 
@@ -115,16 +119,26 @@ Structure the markdown like this:
 <Only include if the content is directly relevant to the user's domain or goals. Omit otherwise.>
 ```
 
-### 4. Clean up
+### 4. Clean up — MANDATORY, never skip
 
-After the `.md` is written, delete the work dir (it contains the full downloaded video + frames, which is large). The script prints `Work dir: <path>` in the footer of its report; pass that path to `rm -rf`.
+Frames are **throwaway**. They are extracted only so Claude can Read them; once you have, they must be deleted. Leaving them behind litters the temp dir with the full downloaded video + dozens of JPEGs.
 
-If the user specified a non-tmp `--out-dir`, ask before deleting.
+**Always run the cleanup helper as the final step**, passing the `Work dir: <path>` from the report footer:
+
+```
+python scripts/cleanup.py "<work-dir>"
+```
+
+The helper refuses to delete any directory whose name lacks "watch" (safety guard). It is the last action of every `/watch-video` run — do it even if the user didn't ask, and even if you only extracted frames without writing notes.
+
+If the user specified a non-tmp `--out-dir` that they clearly want to keep, confirm before deleting.
 
 ## Common gotchas
 
 - **YouTube Shorts / age-gated / members-only** — yt-dlp may fail. Surface its stderr verbatim; don't retry silently.
-- **No captions + no Whisper key** — the report says `Transcript: none available` and points at `setup.py`. Tell the user they can add a Groq key to `~/.config/watch/.env` for Whisper, or use `--no-whisper` for frames-only.
+- **No captions + no Whisper backend** — the report says `Transcript: none available`. Install `faster-whisper` for local transcription (preferred), add a Groq key to `~/.config/watch/.env`, or use `--no-whisper` for frames-only.
+- **Hebrew / non-ASCII filenames on Windows** — ffmpeg/ffprobe emit UTF-8, which Python on a Hebrew Windows locale would otherwise decode as cp1255 and crash (Duration reads `0.0s`, fps falls back to 1). The subprocess calls now force `encoding="utf-8"`, so non-ASCII paths work. Set `PYTHONIOENCODING=utf-8` if you still see mojibake in the printed report.
+- **First local-whisper run is slow** — faster-whisper downloads the model (~1.5 GB for `medium`) on first use, then caches it. Subsequent runs are fast.
 - **Local file with no audio track** — Whisper extraction errors out cleanly. Use `--no-whisper` for frames-only.
 - **Very long videos (>30 min)** — confirm with the user before running. The pipeline caps at 100 frames so the budget is bounded, but a sparse 100-frame scan of a 60-min video isn't very useful. Almost always better to run focused on the specific section.
 - **Cloudflare 403 on Groq** — `whisper.py` already sets a custom User-Agent to clear Cloudflare's default-Python-UA block. If you ever see a 403, that's the failure mode.

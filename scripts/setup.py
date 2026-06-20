@@ -95,7 +95,20 @@ def _read_env_key(name: str) -> str | None:
     return None
 
 
+def _faster_whisper_available() -> bool:
+    """True if local faster-whisper is importable (no key/network needed)."""
+    try:
+        import faster_whisper  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def _have_api_key() -> tuple[bool, str | None]:
+    # Local faster-whisper is a complete transcription backend on its own —
+    # private, free, no key. Prefer it when present.
+    if _faster_whisper_available():
+        return True, "local"
     if _read_env_key("GROQ_API_KEY"):
         return True, "groq"
     if _read_env_key("OPENAI_API_KEY"):

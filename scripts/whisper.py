@@ -31,6 +31,83 @@ GROQ_MODEL = "whisper-large-v3"
 OPENAI_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
 OPENAI_MODEL = "whisper-1"
 
+# Local backend (faster-whisper). Default model overridable via env.
+# medium is a good speed/accuracy balance for Hebrew + English; bump to
+# large-v3 via WATCH_WHISPER_MODEL=large-v3 for max accuracy.
+LOCAL_MODEL = os.environ.get("WATCH_WHISPER_MODEL", "medium")
+
+
+def faster_whisper_available() -> bool:
+    """True if the local faster-whisper backend can be used (no network/key)."""
+    try:
+        import faster_whisper  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def select_backend(preferred: str | None = None) -> tuple[str | None, str | None]:
+    """Choose a Whisper backend, returning (backend, api_key_or_None).
+
+    Forced choice wins. Otherwise prefer local faster-whisper (private, free,
+    no key, never leaves the machine) when installed, then fall back to a cloud
+    key (Groq, then OpenAI).
+    """
+    if preferred == "local":
+        return "local", None
+    if preferred in ("groq", "openai"):
+        return load_api_key(preferred)
+    if faster_whisper_available():
+        return "local", None
+    return load_api_key(None)
+
+
+def transcribe_local(audio_path: Path, model_size: str = LOCAL_MODEL) -> list[dict]:
+    """Transcribe locally with faster-whisper — no network, no API key.
+
+    Tries GPU (float16) first, falls back to CPU (int8). The model is
+    downloaded once to the HuggingFace cache on first use. Language is
+    auto-detected (handles Hebrew + English).
+    """
+    try:
+        from faster_whisper import WhisperModel
+    except Exception as exc:
+        raise SystemExit(
+            "faster-whisper is not installed. Install with: pip install faster-whisper"
+        ) from exc
+
+    model = None
+    last_exc: Exception | None = None
+    for device, compute_type in (("cuda", "float16"), ("cpu", "int8")):
+        try:
+            print(
+                f"[watch] loading faster-whisper '{model_size}' on {device} ({compute_type})…",
+                file=sys.stderr,
+            )
+            model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            break
+        except Exception as exc:
+            last_exc = exc
+            print(
+                f"[watch] {device} backend unavailable ({type(exc).__name__}) — trying next…",
+                file=sys.stderr,
+            )
+    if model is None:
+        raise SystemExit(f"Could not initialize faster-whisper: {last_exc}")
+
+    segments_iter, _info = model.transcribe(str(audio_path), vad_filter=True)
+    out: list[dict] = []
+    for seg in segments_iter:
+        text = (seg.text or "").strip()
+        if not text:
+            continue
+        out.append({
+            "start": round(float(seg.start or 0.0), 2),
+            "end": round(float(seg.end or 0.0), 2),
+            "text": text,
+        })
+    return out
+
 
 def load_api_key(preferred: str | None = None) -> tuple[str, str] | tuple[None, None]:
     """Return (backend, api_key). Prefers Groq, falls back to OpenAI.
@@ -101,7 +178,7 @@ def extract_audio(video_path: str, out_path: Path) -> Path:
         "-b:a", "64k",
         str(out_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         raise SystemExit(f"ffmpeg audio extraction failed: {result.stderr.strip()}")
     if not out_path.exists() or out_path.stat().st_size == 0:
@@ -271,15 +348,17 @@ def transcribe_video(
 
     Returns (segments, backend_used). Raises SystemExit on any failure.
     """
-    if backend is None or api_key is None:
-        detected_backend, detected_key = load_api_key()
-        backend = backend or detected_backend
-        api_key = api_key or detected_key
+    if backend is None:
+        backend, detected_key = select_backend()
+        if api_key is None:
+            api_key = detected_key
 
-    if not backend or not api_key:
+    # Cloud backends need a key; the local backend never does.
+    if backend != "local" and (not backend or not api_key):
         setup_py = Path(__file__).resolve().parent / "setup.py"
         raise SystemExit(
-            "No Whisper API key available. Set GROQ_API_KEY (preferred) or OPENAI_API_KEY "
+            "No Whisper backend available. Install faster-whisper for local transcription "
+            "(`pip install faster-whisper`), or set GROQ_API_KEY / OPENAI_API_KEY "
             "in the environment or in ~/.config/watch/.env. "
             f"Run `python3 {setup_py}` to configure."
         )
@@ -287,16 +366,19 @@ def transcribe_video(
     print(f"[watch] extracting audio for Whisper ({backend})…", file=sys.stderr)
     audio_path = extract_audio(video_path, audio_out)
     size_kb = audio_path.stat().st_size / 1024
-    print(f"[watch] audio: {size_kb:.0f} kB — uploading to {backend} Whisper…", file=sys.stderr)
 
-    if backend == "groq":
-        response = _post_whisper(GROQ_ENDPOINT, api_key, GROQ_MODEL, audio_path)
+    if backend == "local":
+        print(f"[watch] audio: {size_kb:.0f} kB — transcribing locally (faster-whisper)…", file=sys.stderr)
+        segments = transcribe_local(audio_path)
+    elif backend == "groq":
+        print(f"[watch] audio: {size_kb:.0f} kB — uploading to groq Whisper…", file=sys.stderr)
+        segments = _segments_from_response(_post_whisper(GROQ_ENDPOINT, api_key, GROQ_MODEL, audio_path))
     elif backend == "openai":
-        response = _post_whisper(OPENAI_ENDPOINT, api_key, OPENAI_MODEL, audio_path)
+        print(f"[watch] audio: {size_kb:.0f} kB — uploading to openai Whisper…", file=sys.stderr)
+        segments = _segments_from_response(_post_whisper(OPENAI_ENDPOINT, api_key, OPENAI_MODEL, audio_path))
     else:
         raise SystemExit(f"Unknown whisper backend: {backend}")
 
-    segments = _segments_from_response(response)
     if not segments:
         raise SystemExit("Whisper returned no transcript segments")
 
